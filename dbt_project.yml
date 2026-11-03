@@ -1,0 +1,20 @@
+name: sanctions_exposure
+version: "1.0.0"
+profile: sanctions_exposure
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  start_date: "2024-01-01"
+  end_date: "2024-01-08"
+
+models:
+  sanctions_exposure:
+    staging:
+      +materialized: table

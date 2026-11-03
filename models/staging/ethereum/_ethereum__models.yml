@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_ethereum__transactions
+    description: One row per transaction in the configured window. No business filters.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [from_address, nonce]
+    columns:
+      - name: from_address
+        data_tests: [not_null]
+      - name: nonce
+        data_tests: [not_null]
+      - name: block_timestamp
+        data_tests: [not_null]
+      - name: receipt_status
+        data_tests:
+          - accepted_values:
+              values: [0, 1]
+              quote: false
+      - name: to_address
+        description: Null when the transaction creates a contract. Deliberately not tested for not_null.

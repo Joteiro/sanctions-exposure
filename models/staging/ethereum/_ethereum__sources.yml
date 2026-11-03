@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: ethereum
+    database: bigquery-public-data
+    schema: crypto_ethereum
+    tables:
+      - name: transactions
+        description: Ethereum mainnet transactions, maintained by Google. A view over data partitioned on block_timestamp.

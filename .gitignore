@@ -1,0 +1,6 @@
+.venv/
+target/
+dbt_packages/
+logs/
+data/
+seeds/ofac_wallets.csv
