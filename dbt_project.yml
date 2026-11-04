@@ -18,3 +18,13 @@ models:
   sanctions_exposure:
     staging:
       +materialized: table
+
+seeds:
+  sanctions_exposure:
+    ofac_wallets:
+      +column_types:
+        wallet_id: string
+        address: string
+        currency: string
+        holder_id: string
+        first_seen: stringdbt seed

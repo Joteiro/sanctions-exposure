@@ -2,7 +2,7 @@
 
 Tracing exposure to sanctioned entities through real Ethereum transaction flows, modelled end to end on BigQuery with dbt.
 
-**Status:** work in progress — steps 1–3 of 6 complete.
+**Status:** step 4 complete.
 
 ---
 
@@ -207,20 +207,88 @@ The informative end is the other one: 76 addresses spread more than 100 ETH so e
 
 The 100 ETH cut-off is a choice, not a finding: it keeps the population to addresses moving material value. The shape should be re-tested at other cut-offs before anything is built on it.
 
+## Staging layer
+
+Steps 1–3 were one-off queries run in the console. From here on the project is a dbt pipeline: every transformation is a `SELECT` saved in a file, dbt works out the order to run them in, and every run re-checks the data with tests.
+
+```
+bigquery-public-data.crypto_ethereum ──► stg_ethereum__transactions ──┐
+                                                                      ├──► step 5: exposure
+OpenSanctions export ──► seed ──► stg_opensanctions__wallets ─────────┘
+```
+
+Staging does one job: take each source as it is and make it safe to join — consistent names, types and formats. It does not decide what the data means. That is left to the models built on top of it.
+
+### Ethereum transactions
+
+[`stg_ethereum__transactions`](models/staging/ethereum/stg_ethereum__transactions.sql): one row per transaction, 1–7 January 2024. There are no business filters: failed and zero-value transactions stay in, because deciding what counts as a transfer belongs downstream.
+
+| Decision | Why |
+|---|---|
+| Materialised as a **table**, not a view | The dbt convention for staging is a view. Here, a view would make every downstream model and every test re-scan the public source, ~1.09 GiB each time. As a table, the scan is paid once. |
+| Partitioned by day, clustered by `from_address` | Everything downstream filters by date and joins by address: the two levers from the cost section, applied to this project's own table. |
+| Key `(from_address, nonce)` instead of `hash` | Selecting `hash` would add 45% to the scan (1.09 → 1.58 GiB), and it is not needed. Each account numbers its own transactions, so the pair is already unique. That is tested, not assumed: 7,552,945 rows, 7,552,945 distinct keys. |
+| `location: US` and `maximum_bytes_billed` in the dbt profile | The public dataset lives in the US region, and a query cannot combine data from two regions. The 5 GB cap set in the console does not reach dbt, which submits jobs through the API, so it is set again in the profile. |
+
+### Sanctioned wallets
+
+OpenSanctions publishes the OFAC list as one JSON entity per line. [`scripts/extract_wallets.py`](scripts/extract_wallets.py) keeps the Ethereum-format addresses and writes them as a dbt seed, which [`stg_opensanctions__wallets`](models/staging/opensanctions/stg_opensanctions__wallets.sql) normalises. The export and the seed are git-ignored: the data is CC BY-NC 4.0, so this repository ships the script that rebuilds the seed, not the data itself.
+
+From the 4 November 2026 export: **1,074** wallet entities across all currencies; **137** rows with an Ethereum-format address; **127** distinct addresses.
+
+Three features of the source would have broken a naive pipeline, each without raising an error:
+
+| Trap | How big | Handling |
+|---|---|---|
+| Filtering on `currency = 'ETH'` | **4** of 127 addresses are never labelled ETH: they are listed under USDT or another token or chain | Filter on address format (`0x` + 40 hex characters) and keep the label as a column |
+| Letter case | **69** of 127 addresses are published in mixed-case checksum format; Ethereum data is all lowercase | `lower()` in staging, measured below |
+| Repeated addresses | **7** addresses appear on more than one row: the same address listed once per currency | One row per wallet entity; `address` deliberately not tested as unique |
+
+The repeats are kept on purpose. Staging stays one row per source record, so nothing is lost — which currency, which holder. Collapsing to one row per address belongs in step 5, where the join to transactions happens: joining transactions on a key that repeats would silently count the same transaction two or three times.
+
+### Why `lower()` matters, measured
+
+[`10_case_sensitivity.sql`](analyses/10_case_sensitivity.sql) asks a simple question: of the 127 sanctioned addresses, how many appear in the week's transactions, as sender or receiver?
+
+| Join on | Sanctioned addresses found |
+|---|---|
+| The address as published | 2 |
+| The address normalised to lowercase | **5** |
+
+A case-sensitive join misses 3 of the 5. It returns fewer rows, raises no error and looks plausible. This is the kind of failure synthetic data never shows you.
+
+Whether those 5 addresses were already sanctioned in January 2024 is a separate question, and the subject of step 5: `first_seen_at` records when OpenSanctions first saw an entry, not when OFAC designated it.
+
+### Tests
+
+A dbt test is a query that returns the rows breaking a rule. Zero rows is a pass. Because staging is a table, tests read this project's copy rather than the public source, so they cost almost nothing to run.
+
+| Model | Tested | Deliberately not tested, and why |
+|---|---|---|
+| `stg_ethereum__transactions` | `(from_address, nonce)` unique · `from_address`, `nonce`, `block_timestamp` not null · `receipt_status` in {0, 1} · addresses are lowercase hex | `to_address` not null: null means the transaction created a contract, so 5,895 correct rows would fail |
+| `stg_opensanctions__wallets` | `wallet_id` unique and not null · `address`, `currency`, `holder_id`, `first_seen_at` not null · addresses are lowercase hex | `address` unique: the 7 repeats are real |
+
+A test that is not there is a decision too, so both are written into the model descriptions. Otherwise someone adds them later "for tidiness" and the pipeline starts failing on correct data.
+
 ## Repository layout
 
 ```
-analyses/   every query behind a figure in this README, one statement per file
+analyses/   one-off queries behind the figures in this README, one statement per file
+models/     dbt models — staging/ethereum, staging/opensanctions
+tests/      custom dbt tests, each written as a query that returns the rows breaking a rule
+scripts/    extract_wallets.py — rebuilds the sanctions seed from the OpenSanctions export
+seeds/      the generated seed (git-ignored)
+data/       the downloaded export (git-ignored)
 ```
 
-Each file states its dry-run size in the header. One statement per file is deliberate: the BigQuery console's estimate for a multi-statement script is the sum of all its statements, which makes per-query figures easy to misread. dbt models join in step 4.
+Each file states its dry-run size in the header. One statement per file is deliberate: the BigQuery console's estimate for a multi-statement script is the sum of all its statements, which makes per-query figures easy to misread.
 
 ## Roadmap
 
 1. ✅ Environment, cost controls, first measured query
 2. ✅ Query optimisation: column pruning, measured before and after
 3. ✅ Window functions: velocity, running totals, counterparty concentration — and the tie problem
-4. ⬜ dbt staging models with schema tests
+4. ✅ dbt staging models with schema tests
 5. ⬜ Marts: 1-hop and 2-hop exposure, sanctions snapshot, lineage graph
 6. ⬜ Evidence-grounded summarisation layer, and the write-up
 
@@ -231,6 +299,7 @@ Worth stating plainly, because the gap between what a model measures and what pe
 - **It does not establish identity.** An address is not a person. No attribution or address-clustering is attempted, and no address is labelled in this repository — including the high-volume ones above, several of which are publicly known. Labelling them would contradict the point.
 - **It does not prove wrongdoing.** Proximity to a sanctioned address is an exposure signal, not a finding. Hop distance measures graph distance, nothing more.
 - **Features are computed inside fixed windows** — one day for velocity and running totals, one week for concentration. Activity just before a window opens is invisible, so an address's first transfer of the day has no predecessor even if it also transacted a minute before midnight.
+- **The sanctions list is a single export** (4 November 2026). An address delisted before that date is invisible, and `first_seen_at` is not a designation date.
 - **It does not cover all value transfer.** Internal transactions, token transfers and bridges are out of scope for now, so "total ETH received" means native transfers only.
 
 ## Stack

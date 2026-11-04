@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_opensanctions__wallets
+    description: >
+      Sanctioned wallet entities from the OpenSanctions US OFAC SDN export, Ethereum-format
+      addresses only, address normalised to lowercase. One row per wallet entity.
+    columns:
+      - name: wallet_id
+        data_tests: [not_null, unique]
+      - name: address
+        description: >
+          Lowercase. Deliberately not tested as unique: the same address is listed once per
+          currency label, so 7 addresses repeat in the 4 November 2026 export.
+        data_tests: [not_null]
+      - name: currency
+        data_tests: [not_null]
+      - name: holder_id
+        data_tests: [not_null]
+      - name: first_seen_at
+        description: When OpenSanctions first saw the entry. Not the OFAC designation date.
+        data_tests: [not_null]
