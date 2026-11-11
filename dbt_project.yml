@@ -13,10 +13,16 @@ clean-targets: ["target", "dbt_packages"]
 vars:
   start_date: "2024-01-01"
   end_date: "2024-01-08"
+  opensanctions_tracking_start: "2023-04-20"
+  hub_degree_threshold: 1000
 
 models:
   sanctions_exposure:
     staging:
+      +materialized: table
+    intermediate:
+      +materialized: view
+    marts:
       +materialized: table
 
 seeds:
@@ -27,4 +33,4 @@ seeds:
         address: string
         currency: string
         holder_id: string
-        first_seen: stringdbt seed
+        first_seen: string

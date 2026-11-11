@@ -7,3 +7,5 @@ sources:
     tables:
       - name: transactions
         description: Ethereum mainnet transactions, maintained by Google. A view over data partitioned on block_timestamp.
+      - name: token_transfers
+        description: Token transfer events (ERC-20 and ERC-721), maintained by Google. A view over data partitioned on block_timestamp.

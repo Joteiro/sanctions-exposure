@@ -22,3 +22,20 @@ models:
                 quote: false
       - name: to_address
         description: Null when the transaction creates a contract. Deliberately not tested for not_null.
+
+  - name: stg_ethereum__token_transfers
+    description: >
+      One row per token transfer event (ERC-20 and ERC-721) in the configured window.
+      amount_raw is kept as text in the token's smallest unit: decimals differ per token.
+    data_tests:
+      # (block_number, log_index) identifies an event: log_index is its position in the block.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [block_number, log_index]
+    columns:
+      - name: block_number
+        data_tests: [not_null]
+      - name: log_index
+        data_tests: [not_null]
+      - name: block_timestamp
+        data_tests: [not_null]

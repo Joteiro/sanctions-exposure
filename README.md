@@ -2,7 +2,7 @@
 
 Tracing exposure to sanctioned entities through real Ethereum transaction flows, modelled end to end on BigQuery with dbt.
 
-**Status:** step 4 complete.
+**Status:** work in progress — steps 1–5 of 6 complete.
 
 ---
 
@@ -15,7 +15,7 @@ A data pipeline that joins **real on-chain transaction flows** against **real sa
 - How much value moved, and over what period?
 - Which addresses became risky *retroactively*, because a designation was published after the activity took place?
 
-That last question is the interesting one. A sanctions designation applies to past activity, so an address that was clean yesterday is not clean today. Modelling it honestly means treating the sanctions list as a slowly changing dimension, not a static lookup.
+That last question is the interesting one. A sanctions designation applies to past activity, so an address that was clean yesterday is not clean today. Modelling it honestly means dating every entry on the list and comparing that date with the date of each transfer, not treating the list as a static lookup.
 
 ## Data sources
 
@@ -270,15 +270,82 @@ A dbt test is a query that returns the rows breaking a rule. Zero rows is a pass
 
 A test that is not there is a decision too, so both are written into the model descriptions. Otherwise someone adds them later "for tidiness" and the pipeline starts failing on correct data.
 
+## Exposure
+
+Step 5 joins the two sides. Two intermediate models prepare them, and two marts answer the questions.
+
+![Lineage graph](docs/lineage.png)
+
+*Lineage graph from `dbt docs`: sources and seed, then staging, intermediate and marts.*
+
+- [`int_sanctioned_addresses`](models/intermediate/int_sanctioned_addresses.sql): one row per sanctioned address (127). In staging, `address` was deliberately not unique, because the grain was the wallet. Here the grain is the address, so the `unique` test belongs and passes. A test is a property of a model's grain, not of a column.
+- [`int_transfers`](models/intermediate/int_transfers.sql): every value-moving transfer in the window, native ETH and tokens, in one shape. This is where "transfer" gets its business definition: a successful native transaction carrying value, or a token transfer event.
+- Both intermediates are views. The sandbox allows 10 GiB of storage, and a view stores nothing.
+
+### Sanctioned addresses move tokens, not ether
+
+In the week, the sanctioned addresses have exactly **one** successful native ETH transfer carrying value: 0.0038 ETH. Their real activity is token transfers. That is why [`stg_ethereum__token_transfers`](models/staging/ethereum/stg_ethereum__token_transfers.sql) was added: 7,662,308 events, keyed on `(block_number, log_index)` and tested unique. A pipeline built on native ETH alone would have reported almost no exposure, and it would have been wrong.
+
+Token amounts are counted, not valued. Each token has its own units, and no prices are joined.
+
+### Direct exposure, and how much of it is retroactive
+
+[`fct_sanctioned_exposure`](models/marts/fct_sanctioned_exposure.sql) has one row per transfer and sanctioned party: **26 rows** covering 24 transfers, 7 sanctioned addresses and 16 counterparties. Two transfers run between two sanctioned addresses, so they appear once from each side.
+
+| Status of the sanctioned address at the time of the transfer | Rows |
+|---|---|
+| Already on the list | 1 |
+| Added to the list later | **25** |
+| Unknown | 0 |
+
+**25 of the 26 are retroactive.** Those addresses were added to the list between March 2024 and October 2026, after this week of January 2024. A screen run that week would have cleared every one of those transfers. The same screen run today flags them. ([`11_exposure_summary.sql`](analyses/11_exposure_summary.sql))
+
+How the listing date works: the export carries no designation date for these entries. `first_seen_at` stands in for it. OpenSanctions re-reads the list continuously, so a new entry first appears close to the day it was added. The exception is the 42 of 127 addresses first seen on 20 April 2023, the day OpenSanctions began tracking the list. For those, all that is known is that they were listed on or before that day. They are flagged `listing_date_known = false`, and a transfer before that date would be marked `unknown` rather than guessed. None falls in this week.
+
+### Two hops, and the hub problem
+
+[`fct_address_exposure_hops`](models/marts/fct_address_exposure_hops.sql) gives every address within two hops of a sanctioned address, by shortest distance:
+
+| Hop | Meaning | Addresses |
+|---|---|---|
+| 0 | Sanctioned | 127 (120 with no activity this week) |
+| 1 | Transferred directly with a sanctioned address | 14 |
+| 2 | Transferred with someone at hop 1 | **222,636** |
+
+222,636 is **7.7% of the 2,893,553 addresses active that week** ([`13_active_addresses.sql`](analyses/13_active_addresses.sql)). That is not exposure. It is an artefact of four addresses. Four of the 14 direct counterparties are hubs, with between 20,001 and 97,499 counterparties of their own in a single week. Anything that touched one of them is "two hops from a sanctioned address".
+
+The model marks a hub as any address with more counterparties than a threshold, and flags two-hop addresses reached *only* through hubs. The threshold is a dbt variable, so testing other values takes one command each and no code changes:
+
+```
+dbt build --select fct_address_exposure_hops --vars "{hub_degree_threshold: 100}"
+```
+
+| Hub threshold (counterparties in the week) | Hubs among direct counterparties | Two-hop addresses left without hubs |
+|---|---|---|
+| 100 | 5 | 24 |
+| **1,000** (default) | 4 | 704 |
+| 10,000 | 4 | 704 |
+
+([`12_hop_summary.sql`](analyses/12_hop_summary.sql), run once per threshold.)
+
+Reading the table:
+
+- **99.7% of two-hop exposure** (221,932 of 222,636 addresses) passes only through four addresses.
+- The result is stable between 1,000 and 10,000 because there is a wide gap in the data: the four hubs each have at least 20,001 counterparties, and the next-largest direct counterparty has 683.
+- Below 683 the picture changes. At a threshold of 100, that fifth address also counts as a hub, and the 704 drop to 24. Almost everything left at two hops comes through one mid-sized address.
+
+In a compliance team, hubs are identified by labels (known exchange and contract addresses), not by counting. This project does not label addresses, so the count stands in for labels. It is a proxy, and the threshold table is there to show how much rides on it.
+
 ## Repository layout
 
 ```
 analyses/   one-off queries behind the figures in this README, one statement per file
-models/     dbt models — staging/ethereum, staging/opensanctions
+models/     dbt models — staging, intermediate, marts
 tests/      custom dbt tests, each written as a query that returns the rows breaking a rule
 scripts/    extract_wallets.py — rebuilds the sanctions seed from the OpenSanctions export
 seeds/      the generated seed (git-ignored)
 data/       the downloaded export (git-ignored)
+docs/       lineage graph
 ```
 
 Each file states its dry-run size in the header. One statement per file is deliberate: the BigQuery console's estimate for a multi-statement script is the sum of all its statements, which makes per-query figures easy to misread.
@@ -289,7 +356,7 @@ Each file states its dry-run size in the header. One statement per file is delib
 2. ✅ Query optimisation: column pruning, measured before and after
 3. ✅ Window functions: velocity, running totals, counterparty concentration — and the tie problem
 4. ✅ dbt staging models with schema tests
-5. ⬜ Marts: 1-hop and 2-hop exposure, sanctions snapshot, lineage graph
+5. ✅ Marts: direct and two-hop exposure, retroactive listing, lineage graph
 6. ⬜ Evidence-grounded summarisation layer, and the write-up
 
 ## What this does not do
@@ -298,13 +365,14 @@ Worth stating plainly, because the gap between what a model measures and what pe
 
 - **It does not establish identity.** An address is not a person. No attribution or address-clustering is attempted, and no address is labelled in this repository — including the high-volume ones above, several of which are publicly known. Labelling them would contradict the point.
 - **It does not prove wrongdoing.** Proximity to a sanctioned address is an exposure signal, not a finding. Hop distance measures graph distance, nothing more.
+- **Hops measure who transacted with whom, not where funds went.** Direction and time are ignored: an address two hops away may have dealt with the intermediary before the intermediary ever touched the sanctioned address.
 - **Features are computed inside fixed windows** — one day for velocity and running totals, one week for concentration. Activity just before a window opens is invisible, so an address's first transfer of the day has no predecessor even if it also transacted a minute before midnight.
-- **The sanctions list is a single export** (4 November 2026). An address delisted before that date is invisible, and `first_seen_at` is not a designation date.
-- **It does not cover all value transfer.** Internal transactions, token transfers and bridges are out of scope for now, so "total ETH received" means native transfers only.
+- **The sanctions list is a single export** (4 November 2026). An address delisted before that date is invisible. `first_seen_at` approximates the designation date; for 42 addresses it is only an upper bound.
+- **It does not cover all value transfer.** Native ETH transfers and token transfer events are in scope; internal transactions (ETH moved by contracts) and bridges are not. Token amounts are counted, not valued.
 
 ## Stack
 
-BigQuery (sandbox) · dbt · SQL · Looker Studio
+BigQuery (sandbox) · dbt Core · SQL · Python
 
 ---
 

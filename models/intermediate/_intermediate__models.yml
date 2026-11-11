@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: int_sanctioned_addresses
+    description: One row per sanctioned Ethereum address, collapsed from wallet entities.
+    columns:
+      - name: address
+        description: Unique here, unlike in staging. The grain is now the address.
+        data_tests: [not_null, unique]
+      - name: first_listed_at
+        data_tests: [not_null]
+  - name: int_transfers
+    description: Every value-moving transfer in the window, native ETH and tokens, in one shape.
+    columns:
+      - name: transfer_id
+        data_tests: [not_null, unique]
+      - name: from_address
+        data_tests: [not_null]
+      - name: to_address
+        data_tests: [not_null]
+      - name: block_timestamp
+        data_tests: [not_null]
