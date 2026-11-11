@@ -40,3 +40,8 @@ models:
               arguments:
                 values: [0, 1, 2]
                 quote: false
+      - name: min_via_counterparties
+        description: >
+          Hop 2 only. Counterparties of the least-connected hop-1 address that links this
+          address to a sanctioned one. The address survives a hub filter at threshold T
+          exactly when min_via_counterparties <= T.

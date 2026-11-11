@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sanctions Exposure Snapshot</title>
+<meta name="description" content="One week of Ethereum transfers checked against today's OFAC sanctions list: direct exposure, retroactive listing and two-hop exposure.">
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --border:         rgba(11, 11, 11, 0.10);
+    --series-1:       #2a78d6;
+    --series-2:       #eb6834;
+    --hover-wash:     rgba(11, 11, 11, 0.04);
+    --tooltip-bg:     #0b0b0b;
+    --tooltip-text:   #f0efec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --axis:           #383835;
+      --border:         rgba(255, 255, 255, 0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --hover-wash:     rgba(255, 255, 255, 0.05);
+      --tooltip-bg:     #f0efec;
+      --tooltip-text:   #0b0b0b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --axis:           #383835;
+    --border:         rgba(255, 255, 255, 0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --hover-wash:     rgba(255, 255, 255, 0.05);
+    --tooltip-bg:     #f0efec;
+    --tooltip-text:   #0b0b0b;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 40px 0 24px; }
+  .eyebrow {
+    margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-secondary);
+  }
+  h1 { margin: 0 0 10px; font-size: clamp(24px, 4vw, 32px); line-height: 1.2; font-weight: 650; text-wrap: balance; }
+  .lede { margin: 0; color: var(--text-secondary); max-width: 68ch; }
+  .lede a, footer a { color: inherit; }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin: 0 0 16px;
+  }
+  .card h2 { margin: 0 0 4px; font-size: 17px; font-weight: 650; }
+  .card .sub { margin: 0 0 14px; color: var(--text-secondary); font-size: 14px; max-width: 72ch; }
+
+  .stats { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .stat { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  .stat .label { margin: 0 0 6px; font-size: 13px; color: var(--text-secondary); }
+  .stat .value { margin: 0; font-size: 30px; font-weight: 650; line-height: 1.1; }
+  .stat.hero .value { font-size: 52px; }
+  .stat .note { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .key-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .key-rect { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 20px; margin: 24px 0 16px;
+  }
+  .controls label { font-weight: 600; font-size: 14px; }
+  .controls input[type=range] { flex: 1 1 220px; accent-color: var(--series-2); min-width: 160px; }
+  .controls output { font-variant-numeric: tabular-nums; font-weight: 650; min-width: 9ch; }
+  .controls .hint { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-secondary); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .readout { margin: 0 0 12px; font-size: 14px; color: var(--text-secondary); }
+  .readout strong { color: var(--text-primary); font-size: 22px; font-weight: 650; }
+
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  svg text { font-family: inherit; }
+  .tick { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .val { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums;
+         paint-order: stroke; stroke: var(--surface-1); stroke-width: 4px; stroke-linejoin: round; }
+  .row-label { fill: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .hit { fill: transparent; cursor: default; }
+  .hit:hover, .hit:focus { fill: var(--hover-wash); outline: none; }
+  .hit:focus-visible { stroke: var(--text-secondary); stroke-width: 1; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 10; opacity: 0;
+    background: var(--tooltip-bg); color: var(--tooltip-text);
+    border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+    max-width: 260px; transition: opacity .08s;
+  }
+  #tooltip .t-value { font-weight: 650; font-size: 14px; display: block; }
+
+  details { margin: 0 0 16px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 12px 0 18px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  .table-scroll { overflow-x: auto; }
+
+  footer { padding: 8px 0 48px; color: var(--text-secondary); font-size: 13px; }
+  footer p { margin: 0 0 8px; max-width: 78ch; }
+
+  @media (max-width: 760px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+    .stat.hero, .stat:last-child { grid-column: 1 / -1; }
+    .two-col { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">sanctions-exposure · snapshot</p>
+    <h1>One week of Ethereum, checked against today's sanctions list</h1>
+    <p class="lede" id="lede"></p>
+  </header>
+
+  <section class="stats" aria-label="Headline figures">
+    <div class="stat hero">
+      <p class="label">Exposures to addresses not yet sanctioned at the time</p>
+      <p class="value" id="stat-retro"></p>
+      <p class="note" id="stat-retro-note"></p>
+    </div>
+    <div class="stat">
+      <p class="label">Transfers touching a sanctioned address</p>
+      <p class="value" id="stat-transfers"></p>
+    </div>
+    <div class="stat">
+      <p class="label">Sanctioned addresses active</p>
+      <p class="value" id="stat-active"></p>
+      <p class="note" id="stat-active-note"></p>
+    </div>
+    <div class="stat">
+      <p class="label">Exposures in ether</p>
+      <p class="value" id="stat-eth"></p>
+      <p class="note" id="stat-eth-note"></p>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="h-retro">
+    <h2 id="h-retro">When each address was added to the list</h2>
+    <p class="sub">Each row is one sanctioned address that transacted in the week. A screen run that week would have cleared every row whose listing date falls after it.</p>
+    <div class="legend" aria-hidden="true">
+      <span><i class="key-dot" style="background:var(--series-1)"></i>Transfers in the week</span>
+      <span><i class="key-dot" style="background:var(--series-2)"></i>Added to the sanctions list</span>
+    </div>
+    <div id="chart-retro"></div>
+  </section>
+
+  <div class="controls" role="group" aria-labelledby="threshold-label">
+    <label id="threshold-label" for="threshold">Hub threshold</label>
+    <input type="range" id="threshold" min="0" max="500" step="1" aria-describedby="threshold-hint">
+    <output id="threshold-out" for="threshold"></output>
+    <p class="hint" id="threshold-hint">An address with more counterparties than this in the week counts as a hub (an exchange, a router, a popular contract). Both charts below follow this control.</p>
+  </div>
+
+  <div class="two-col">
+    <section class="card" aria-labelledby="h-hubs">
+      <h2 id="h-hubs">The 14 direct counterparties</h2>
+      <p class="sub">How many counterparties each one had in the week. Log scale.</p>
+      <div class="legend" aria-hidden="true">
+        <span><i class="key-rect" style="background:var(--series-1)"></i>Below threshold</span>
+        <span><i class="key-rect" style="background:var(--series-2)"></i>Hub</span>
+      </div>
+      <div id="chart-hubs"></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-curve">
+      <h2 id="h-curve">Two-hop exposure left after removing hubs</h2>
+      <p class="readout" id="readout"></p>
+      <div id="chart-curve"></div>
+    </section>
+  </div>
+
+  <details class="card">
+    <summary>Data tables</summary>
+    <div class="table-scroll" id="tables"></div>
+  </details>
+
+  <footer>
+    <p><strong>Definitions.</strong> A transfer is a successful native ETH transaction that carries value, or a token transfer event. Exposure is one row per transfer and sanctioned party. The listing date is when OpenSanctions first saw the entry, which stands in for the designation date. Hops ignore direction and time: they measure who transacted with whom, not where funds went.</p>
+    <p><strong>Privacy.</strong> No address appears on this page. Sanctioned addresses are numbered by listing date, and counterparties are not identified.</p>
+    <p id="provenance"></p>
+  </footer>
+</div>
+<div id="tooltip" role="status" aria-live="polite"></div>
+
+<script id="dashboard-data" type="application/json">{"generated_at": "2026-11-11", "sanctions_export_date": "2026-11-04", "default_threshold": 1000, "window": {"start": "2024-01-01", "end": "2024-01-07"}, "exposure": {"exposure_rows": 26, "transfers": 24, "sanctioned": 7, "counterparties": 16, "eth_rows": 1, "token_rows": 25, "eth_value": 0.0038, "retroactive_rows": 25, "already_listed_rows": 1, "unknown_rows": 0}, "cases": [{"case_number": 1, "first_listed": "2023-08-23", "first_transfer": "2024-01-07", "last_transfer": "2024-01-07", "days_from_transfer_to_listing": -137, "exposure_rows": 1, "eth_rows": 0, "token_rows": 1, "sent_rows": 0, "received_rows": 1}, {"case_number": 2, "first_listed": "2024-03-27", "first_transfer": "2024-01-06", "last_transfer": "2024-01-06", "days_from_transfer_to_listing": 81, "exposure_rows": 1, "eth_rows": 1, "token_rows": 0, "sent_rows": 0, "received_rows": 1}, {"case_number": 3, "first_listed": "2025-05-29", "first_transfer": "2024-01-03", "last_transfer": "2024-01-07", "days_from_transfer_to_listing": 512, "exposure_rows": 4, "eth_rows": 0, "token_rows": 4, "sent_rows": 4, "received_rows": 0}, {"case_number": 4, "first_listed": "2026-08-07", "first_transfer": "2024-01-03", "last_transfer": "2024-01-05", "days_from_transfer_to_listing": 947, "exposure_rows": 8, "eth_rows": 0, "token_rows": 8, "sent_rows": 2, "received_rows": 6}, {"case_number": 5, "first_listed": "2026-08-24", "first_transfer": "2024-01-04", "last_transfer": "2024-01-04", "days_from_transfer_to_listing": 963, "exposure_rows": 2, "eth_rows": 0, "token_rows": 2, "sent_rows": 0, "received_rows": 2}, {"case_number": 6, "first_listed": "2026-10-28", "first_transfer": "2024-01-05", "last_transfer": "2024-01-05", "days_from_transfer_to_listing": 1027, "exposure_rows": 6, "eth_rows": 0, "token_rows": 6, "sent_rows": 4, "received_rows": 2}, {"case_number": 7, "first_listed": "2026-10-28", "first_transfer": "2024-01-05", "last_transfer": "2024-01-05", "days_from_transfer_to_listing": 1027, "exposure_rows": 4, "eth_rows": 0, "token_rows": 4, "sent_rows": 2, "received_rows": 2}], "hops": {"hop0": 127, "hop0_inactive": 120, "hop1": 14, "hop2": 222636}, "direct_counterparties": [97499, 62116, 46030, 20001, 683, 16, 4, 4, 3, 3, 2, 1, 1, 1], "curve": [{"min_via": 2, "n": 1}, {"min_via": 3, "n": 4}, {"min_via": 4, "n": 6}, {"min_via": 16, "n": 13}, {"min_via": 683, "n": 680}, {"min_via": 20001, "n": 19993}, {"min_via": 46030, "n": 45971}, {"min_via": 62116, "n": 60899}, {"min_via": 97499, "n": 95069}], "active_addresses": 2893553}</script>
+<script>
+(function () {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("dashboard-data").textContent);
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const fmt = new Intl.NumberFormat("en-GB");
+  const fmtDate = d => new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+  function el(name, attrs, parent) {
+    const n = document.createElementNS(SVGNS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function text(parent, x, y, str, cls, anchor) {
+    const t = el("text", { x, y, class: cls, "text-anchor": anchor || "start" }, parent);
+    t.textContent = str;
+    return t;
+  }
+  function setText(id, str) { document.getElementById(id).textContent = str; }
+
+  // ---------- tooltip ----------
+  const tip = document.getElementById("tooltip");
+  function showTip(evt, value, lines) {
+    tip.replaceChildren();
+    const v = document.createElement("span"); v.className = "t-value"; v.textContent = value; tip.appendChild(v);
+    for (const l of lines) { const s = document.createElement("span"); s.style.display = "block"; s.textContent = l; tip.appendChild(s); }
+    let x, y;
+    if (evt.clientX !== undefined && evt.type !== "focus") { x = evt.clientX; y = evt.clientY; }
+    else { const r = evt.target.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top; }
+    tip.style.opacity = 1;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, x + 12)) + "px";
+    tip.style.top = Math.max(8, y - h - 12) + "px";
+  }
+  function hideTip() { tip.style.opacity = 0; }
+  function bindTip(node, label, value, lines) {
+    node.setAttribute("tabindex", "0");
+    node.setAttribute("aria-label", label);
+    node.addEventListener("pointermove", e => showTip(e, value, lines()));
+    node.addEventListener("focus", e => showTip(e, value, lines()));
+    node.addEventListener("pointerleave", hideTip);
+    node.addEventListener("blur", hideTip);
+  }
+
+  // ---------- scales ----------
+  const logScale = (d0, d1, r0, r1) => v => r0 + (Math.log10(v) - Math.log10(d0)) / (Math.log10(d1) - Math.log10(d0)) * (r1 - r0);
+  const linScale = (d0, d1, r0, r1) => v => r0 + (v - d0) / (d1 - d0) * (r1 - r0);
+  const compact = v => v >= 1000000 ? fmt.format(v / 1000000) + "M" : v >= 1000 ? (v / 1000 >= 10 ? fmt.format(Math.round(v / 1000)) : (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)) + "K" : fmt.format(v);
+
+  // ---------- header + stats ----------
+  const E = DATA.exposure;
+  setText("lede",
+    `Ethereum mainnet, ${fmtDate(DATA.window.start)} to ${fmtDate(DATA.window.end)}: native ETH and token transfers, ` +
+    `checked against the US OFAC SDN list as published by OpenSanctions on ${fmtDate(DATA.sanctions_export_date)}.`);
+  setText("stat-retro", `${E.retroactive_rows} of ${E.exposure_rows}`);
+  setText("stat-retro-note", `${E.already_listed_rows} already listed, ${E.unknown_rows} unknown`);
+  setText("stat-transfers", fmt.format(E.transfers));
+  setText("stat-active", fmt.format(E.sanctioned));
+  setText("stat-active-note", `of ${fmt.format(DATA.hops.hop0)} on the list`);
+  setText("stat-eth", `${E.eth_rows} of ${E.exposure_rows}`);
+  setText("stat-eth-note", `${E.eth_value} ETH in total; the rest are token transfers`);
+  setText("provenance",
+    `Snapshot generated on ${fmtDate(DATA.generated_at)} by scripts/build_dashboard.py from the dbt marts ` +
+    `fct_sanctioned_exposure and fct_address_exposure_hops. The page does not query BigQuery.`);
+
+  // ---------- chart 1: retroactivity dumbbell ----------
+  function drawRetro() {
+    const host = document.getElementById("chart-retro");
+    const W = Math.max(320, host.clientWidth), rowH = 34, top = 8, bottom = 28, left = 36, right = 96;
+    const H = top + DATA.cases.length * rowH + bottom;
+    host.replaceChildren();
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Transfer week and listing date for each sanctioned address" }, host);
+    const t = d => Date.parse(d + "T00:00:00Z");
+    const all = DATA.cases.flatMap(c => [t(c.first_transfer), t(c.first_listed)]);
+    const y0 = new Date(Math.min(...all)).getUTCFullYear(), y1 = new Date(Math.max(...all)).getUTCFullYear() + 1;
+    const x = linScale(Date.UTC(y0, 0, 1), Date.UTC(y1, 0, 1), left, W - right);
+    for (let yr = y0; yr <= y1; yr++) {
+      const xx = x(Date.UTC(yr, 0, 1));
+      el("line", { x1: xx, x2: xx, y1: top, y2: H - bottom, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      text(svg, xx, H - bottom + 16, String(yr), "tick", "middle");
+    }
+    const wx = x(t(DATA.window.start));
+    el("line", { x1: wx, x2: wx, y1: top, y2: H - bottom, stroke: "var(--axis)", "stroke-width": 1 }, svg);
+    DATA.cases.forEach((c, i) => {
+      const cy = top + i * rowH + rowH / 2, xt = x(t(c.first_transfer)), xl = x(t(c.first_listed));
+      text(svg, 0, cy + 4, "#" + c.case_number, "row-label");
+      el("line", { x1: Math.min(xt, xl), x2: Math.max(xt, xl), y1: cy, y2: cy, stroke: "var(--axis)", "stroke-width": 2, "stroke-linecap": "round" }, svg);
+      el("circle", { cx: xt, cy, r: 5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+      el("circle", { cx: xl, cy, r: 5, fill: "var(--series-2)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+      const d = c.days_from_transfer_to_listing;
+      const lbl = d >= 0 ? `+${fmt.format(d)} days` : `${fmt.format(-d)} days before`;
+      text(svg, Math.max(xt, xl) + 10, cy + 4, lbl, "val");
+      const hit = el("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, class: "hit", rx: 6 }, svg);
+      const assets = c.eth_rows && c.token_rows ? "ETH and tokens" : (c.eth_rows ? "ETH" : "tokens");
+      const valueLine = d >= 0 ? `Listed ${fmt.format(d)} days after the transfers` : `Already listed ${fmt.format(-d)} days before`;
+      bindTip(hit, `Address ${c.case_number}: ${valueLine}`, valueLine, () => [
+        `Address #${c.case_number}`,
+        `Transfers: ${fmtDate(c.first_transfer)}${c.last_transfer !== c.first_transfer ? " to " + fmtDate(c.last_transfer) : ""}`,
+        `Added to the list: ${fmtDate(c.first_listed)}`,
+        `${c.exposure_rows} exposure row${c.exposure_rows > 1 ? "s" : ""} (${c.sent_rows} sent, ${c.received_rows} received), ${assets}`
+      ]);
+    });
+  }
+
+  // ---------- threshold state ----------
+  const slider = document.getElementById("threshold");
+  const toThreshold = v => { const raw = Math.pow(10, v / 100); const p = Math.pow(10, Math.floor(Math.log10(raw)) - 1); return Math.max(1, Math.round(raw / p) * p); };
+  const toSlider = th => Math.round(Math.log10(th) * 100);
+  let threshold = DATA.default_threshold;
+  slider.value = toSlider(threshold);
+
+  const curve = DATA.curve.slice().sort((a, b) => a.min_via - b.min_via);
+  const survivors = th => curve.reduce((s, p) => s + (p.min_via <= th ? p.n : 0), 0);
+
+  // ---------- chart 2: direct counterparties ----------
+  function drawHubs() {
+    const host = document.getElementById("chart-hubs");
+    const W = Math.max(280, host.clientWidth), barH = 14, gap = 6, top = 6, bottom = 24, left = 6, right = 52;
+    const vals = DATA.direct_counterparties.slice().sort((a, b) => b - a);
+    const H = top + vals.length * (barH + gap) + bottom;
+    host.replaceChildren();
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Counterparties of each direct counterparty, log scale" }, host);
+    const x = logScale(1, 100000, left, W - right);
+    [1, 10, 100, 1000, 10000, 100000].forEach(v => {
+      el("line", { x1: x(v), x2: x(v), y1: top, y2: H - bottom, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      text(svg, x(v), H - bottom + 15, compact(v), "tick", "middle");
+    });
+    // threshold rule first, so bars and their labels sit on top of it
+    const tx = x(threshold);
+    el("line", { x1: tx, x2: tx, y1: top - 4, y2: H - bottom, stroke: "var(--text-secondary)", "stroke-width": 1.5 }, svg);
+    vals.forEach((v, i) => {
+      const y = top + i * (barH + gap), w = Math.max(2, x(Math.max(v, 1)) - x(1) + (v === 1 ? 4 : 0));
+      const hub = v > threshold;
+      el("path", { d: `M${left},${y} h${w - 4} a4,4 0 0 1 4,4 v${barH - 8} a4,4 0 0 1 -4,4 h${-(w - 4)} z`, fill: hub ? "var(--series-2)" : "var(--series-1)" }, svg);
+      text(svg, left + w + 6, y + barH - 3, fmt.format(v), "val");
+      const hit = el("rect", { x: 0, y: y - gap / 2, width: W, height: barH + gap, class: "hit", rx: 4 }, svg);
+      bindTip(hit, `${fmt.format(v)} counterparties, ${hub ? "hub" : "below threshold"}`, `${fmt.format(v)} counterparties`,
+        () => [hub ? `Hub at threshold ${fmt.format(threshold)}` : `Below threshold ${fmt.format(threshold)}`]);
+    });
+  }
+
+  // ---------- chart 3: survivors by threshold ----------
+  function drawCurve() {
+    const host = document.getElementById("chart-curve");
+    const W = Math.max(280, host.clientWidth), H = 240, top = 10, bottom = 26, left = 44, right = 12;
+    host.replaceChildren();
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Two-hop addresses left without hubs, by threshold, log scales" }, host);
+    const total = DATA.hops.hop2;
+    const x = logScale(1, 100000, left, W - right), y = logScale(1, 1000000, H - bottom, top);
+    [1, 10, 100, 1000, 10000, 100000, 1000000].forEach(v => {
+      el("line", { x1: left, x2: W - right, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      text(svg, left - 6, y(v) + 4, compact(v), "tick", "end");
+    });
+    [1, 10, 100, 1000, 10000, 100000].forEach(v => text(svg, x(v), H - bottom + 16, compact(v), "tick", "middle"));
+    // step path: survivors(th) is constant between the min_via break points
+    let d = "", started = false;
+    const breaks = [1, ...curve.map(p => p.min_via), 100000];
+    for (let i = 0; i < breaks.length - 1; i++) {
+      const a = breaks[i], b = breaks[i + 1], s = survivors(a);
+      if (s < 1) continue;
+      d += (started ? "L" : "M") + x(a) + "," + y(s) + " L" + x(b) + "," + y(s) + " ";
+      started = true;
+      const sNext = survivors(b);
+      if (sNext >= 1 && sNext !== s) d += "L" + x(b) + "," + y(sNext) + " ";
+    }
+    el("path", { d, fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    el("line", { x1: left, x2: W - right, y1: y(total), y2: y(total), stroke: "var(--axis)", "stroke-width": 1 }, svg);
+    text(svg, left + 6, y(total) - 6, `All ${fmt.format(total)} two-hop addresses`, "val", "start");
+    const s = survivors(threshold), cx = x(threshold);
+    el("line", { x1: cx, x2: cx, y1: top, y2: H - bottom, stroke: "var(--text-secondary)", "stroke-width": 1.5 }, svg);
+    if (s >= 1) {
+      el("circle", { cx, cy: y(s), r: 5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+      text(svg, cx + 8, y(s) - 8, fmt.format(s), "val");
+    }
+    const hit = el("rect", { x: left, y: top, width: W - left - right, height: H - top - bottom, class: "hit" }, svg);
+    const onMove = e => {
+      const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * (W / r.width);
+      const th = Math.pow(10, (px - left) / (W - left - right) * 5);
+      if (th < 1 || th > 100000) return hideTip();
+      const n = survivors(th);
+      showTip(e, `${fmt.format(n)} addresses`, [`Threshold ${fmt.format(Math.round(th))}`, `${(n / total * 100).toFixed(n / total < 0.01 ? 2 : 1)}% of two-hop addresses`]);
+    };
+    hit.addEventListener("pointermove", onMove);
+    hit.addEventListener("pointerleave", hideTip);
+  }
+
+  function update() {
+    threshold = toThreshold(+slider.value);
+    document.getElementById("threshold-out").textContent = `${fmt.format(threshold)} counterparties`;
+    const s = survivors(threshold), total = DATA.hops.hop2;
+    const ro = document.getElementById("readout");
+    ro.replaceChildren();
+    const strong = document.createElement("strong"); strong.textContent = fmt.format(s);
+    ro.append(strong, ` of ${fmt.format(total)} two-hop addresses (${(s / total * 100).toFixed(s / total < 0.01 ? 2 : 1)}%) have at least one path that avoids hubs. ` +
+      `Without the filter, two hops covers ${(total / DATA.active_addresses * 100).toFixed(1)}% of the ${fmt.format(DATA.active_addresses)} addresses active that week.`);
+    drawHubs();
+    drawCurve();
+  }
+
+  // ---------- tables (the accessible view of every value) ----------
+  function table(caption, headers, rows) {
+    const t = document.createElement("table");
+    const c = document.createElement("caption"); c.textContent = caption; c.style.textAlign = "left"; c.style.fontWeight = "600"; c.style.padding = "0 0 6px";
+    t.appendChild(c);
+    const tr = document.createElement("tr");
+    headers.forEach(h => { const th = document.createElement("th"); th.textContent = h; tr.appendChild(th); });
+    t.appendChild(tr);
+    rows.forEach(r => { const row = document.createElement("tr"); r.forEach(v => { const td = document.createElement("td"); td.textContent = v; row.appendChild(td); }); t.appendChild(row); });
+    return t;
+  }
+  const tables = document.getElementById("tables");
+  tables.append(
+    table("Sanctioned addresses active in the week", ["#", "Transfers", "Added to the list", "Days after", "Rows", "Sent", "Received"],
+      DATA.cases.map(c => ["#" + c.case_number, c.first_transfer + (c.last_transfer !== c.first_transfer ? " – " + c.last_transfer : ""), c.first_listed,
+        fmt.format(c.days_from_transfer_to_listing), c.exposure_rows, c.sent_rows, c.received_rows])),
+    table("Direct counterparties", ["Counterparties in the week"], DATA.direct_counterparties.slice().sort((a, b) => b - a).map(v => [fmt.format(v)])),
+    table("Two-hop addresses by least-connected intermediary", ["Intermediary's counterparties", "Two-hop addresses", "Left at a threshold of at least this"],
+      curve.map(p => [fmt.format(p.min_via), fmt.format(p.n), fmt.format(survivors(p.min_via))]))
+  );
+
+  slider.addEventListener("input", update);
+  let rt;
+  window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { drawRetro(); update(); }, 120); });
+  drawRetro();
+  update();
+})();
+</script>
+</body>
+</html>
