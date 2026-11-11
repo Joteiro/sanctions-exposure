@@ -1,0 +1,3 @@
+# Count .sql files in GitHub's language bar. SQL is classed as a "data" language,
+# which GitHub leaves out of the bar unless told otherwise.
+*.sql linguist-detectable=true
